@@ -9,42 +9,49 @@
 # - reduction of dependencies
 # - performance improvements
 
-which javac 2>&1 > /dev/null
-javac_installed=$?
-if [ ! $javac_installed -eq 0 ]; then
-	echo "You need to install javac! CBT needs it to bootstrap from Java sources into Scala." 2>&1
-	exit 1
-fi
+
+# === Utils ===============================================
+
+red=`    tput setaf 1`
+yellow=` tput setaf 3`
+reset=`  tput sgr0`
+
+log()  { >&2 printf "$@\n"; }
+err()  { log "$red$@$reset"; }
+wrn()  { log "$yellow$@$reset"; }
+die()  { err "$@"; exit 1; }
+
+
+# === System checks =======================================
+
+is_installed() { which "$1" 2>&1 > /dev/null; }
+
+is_installed 'javac' || \
+	die "You need to install javac! CBT needs it to bootstrap from Java sources into Scala."
+
 javac_version=$(javac -version 2>&1 | cut -d ' ' -f 2)
 javac_version_minor=$(echo -n $javac_version | cut -d '.' -f 2)
-if [ ! "$javac_version_minor" -ge "8" ]; then
-	echo "You need to install javac version 1.8 or greater! CBT currently relies on Java 8." 2>&1
-	echo "Current javac version is $javac_version" 2>&1
-	exit 1
-fi
-which ng 2>&1 > /dev/null
-ng_installed=$?
-which ng-server 2>&1 > /dev/null
-ng_server_installed=$?
-nailgun_installed=0
-if [ ! $ng_installed -eq 0 ] || [ ! $ng_server_installed -eq 0 ]; then
-	nailgun_installed=1
-	echo "(Note: nailgun not found. It makes CBT faster! Try 'brew install nailgun'.)" 2>&1
-fi
-which realpath 2>&1 > /dev/null
-realpath_installed=$?
-which gcc 2>&1 > /dev/null
-gcc_installed=$?
-if [ ! $realpath_installed -eq 0 ] && [ ! $gcc_installed -eq 0 ]; then
-	echo "You need realpath or gcc installed! CBT needs it to locate itself reliably." 2>&1
-	exit 1
-fi
+[ "$javac_version_minor" -ge "8" ] || \
+	die "You need to install javac version 1.8 or greater! CBT currently relies on Java 8.\nCurrent javac version is $javac_version"
 
-which gpg 2>&1 > /dev/null
-gpg_installed=$?
-if [ ! $gpg_installed -eq 0 ]; then
-	echo "(Note: gpg not found. In order to use publishSigned you'll need it.)" 2>&1
-fi
+is_installed 'realpath' || is_installed 'gcc' || \
+	die "You need realpath or gcc installed! CBT needs it to locate itself reliably."
+
+is_installed 'ng' && is_installed 'ng-server'
+nailgun_installed=$?
+[ $nailgun_installed -eq 0 ] || \
+	wrn "(Note: nailgun not found. It makes CBT faster! Try 'brew install nailgun'.)"
+
+is_installed 'gpg' || \
+	wrn "(Note: gpg not found. In order to use publishSigned you'll need it.)"
+
+is_installed 'nc'
+nc_installed=$?
+[ $nc_installed -eq 0 ] || \
+ 	wrn "(Note: nc not found. It will make slightly startup faster.)"
+
+
+# === Launcher ============================================
 
 NAILGUN_PORT=4444
 NG="ng --nailgun-port $NAILGUN_PORT"
@@ -71,14 +78,12 @@ server_up=1
 if [ $nc_installed -eq 0 ]; then
 	nc -z -n -w 1 127.0.0.1 $NAILGUN_PORT > /dev/null 2>&1
 	server_up=$?
-else
-	echo "(Note: nc not found. It will make slightly startup faster.)" 2>&1
 fi
 
 if [ ! $nc_installed -eq 0 ] || [ ! $server_up -eq 0 ]; then
 	echo "Starting up nailgun" 2>&1
 	# try to start nailgun-server, just in case it's not up
-	ng-server 127.0.0.1:$NAILGUN_PORT >> $NAILGUN/target/nailgun.stdout.log 2>> $NAILGUN/target/nailgun.stderr.log & 
+	ng-server 127.0.0.1:$NAILGUN_PORT >> $NAILGUN/target/nailgun.stdout.log 2>> $NAILGUN/target/nailgun.stderr.log &
 fi
 
 #gdate +"%T.%N"
@@ -90,7 +95,7 @@ if [ ! $? -eq 0 ]; then echo "Problem with bootstrap_scala" 2>&1; exit 1; fi
 # detect source changes in CBT itself
 changed=0
 for file in `ls $NAILGUN/* $STAGE1/*`
-do  
+do
 	if [ $file -nt $INDICATOR ]
     then changed=1
     fi
@@ -105,9 +110,9 @@ then
 	echo "Recompiling CBT. Detected source changes..." 1>&2
 	javac -Xlint:deprecation -d $NAILGUN$TARGET `ls $NAILGUN/*.java`
 	compiles1=$?
-	
+
 	rm $STAGE1$TARGET/cbt/*.class 2>/dev/null
-	
+
 	java -Xmx256M -Xms32M\
 		-Xbootclasspath/a:$SCALA_CLASSPATH\
 		-Dscala.usejavacp=true\
@@ -120,13 +125,13 @@ then
 		`ls $STAGE1/*.scala`
 	compiles2=$?
 	echo "Stopping nailgun" 2>&1
-	$NG ng-stop >> $NAILGUN/target/nailgun.stdout.log 2>> $NAILGUN/target/nailgun.stderr.log & 
+	$NG ng-stop >> $NAILGUN/target/nailgun.stdout.log 2>> $NAILGUN/target/nailgun.stderr.log &
 	echo "Restarting nailgun" 2>&1
-	ng-server 127.0.0.1:$NAILGUN_PORT >> $NAILGUN/target/nailgun.stdout.log 2>> $NAILGUN/target/nailgun.stderr.log & 
+	ng-server 127.0.0.1:$NAILGUN_PORT >> $NAILGUN/target/nailgun.stdout.log 2>> $NAILGUN/target/nailgun.stderr.log &
 fi
 
 build ()
-{ 
+{
 	CP=$STAGE1$TARGET:$SCALA_CLASSPATH
 	if [ $nailgun_installed -eq 1 ] || [ "$1" = "publishSigned" ] || [ "$2" = "publishSigned" ] || [ "$1" = "direct" ] || [ "$2" = "direct" ]
 	then
@@ -154,7 +159,7 @@ build ()
 		#gdate +"%T.%N"
 
 	fi
-} 
+}
 #gdate +"%T.%N"
 # run CBT and loop if desired. This allows recompiling CBT itself as part of compile looping.
 if [ $compiles1 -eq 0 ] && [ $compiles2 -eq 0 ]
